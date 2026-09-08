@@ -2,11 +2,9 @@
 محرك تحويل ثنائي الاتجاه بين PDF و Word (DOCX) - يحافظ على محتوى الملف الأصلي دون أي تغيير.
 
 الاستراتيجية:
-1) PDF → Word: نجرّب أولاً مكتبة pdf2docx التي تحلّل محتوى الصفحة مباشرة (نصوصًا
-   وجداول وصورًا) وتعيد بناءها كفقرات وجمل Word حقيقية قابلة للتحرير والنسخ (أقرب
-   لـ"نسخ ولصق" النص الفعلي)، ثم نتحقق أن الناتج يحتوي نصًا حقيقيًا يقارب حجم نص
-   المصدر. إن فشل هذا المحرك أو أنتج نصًا ناقصًا (كأن يضع الصفحات كصور)، نعود
-   لمحرك LibreOffice (headless) كخطة بديلة موثوقة.
+1) PDF → Word: نستخدم LibreOffice (headless) لقراءة نص PDF الحقيقي (وليس صورة)
+   وإعادة بنائه كمستند Word قابل للتحرير، مع الحفاظ على الفقرات والجداول والصور
+   والتنسيق قدر الإمكان، دون تعديل أي حرف من النص.
 2) Word → PDF: اتجاه مدعوم أصليًا وبشكل موثوق جدًا في LibreOffice (تصدير PDF من
    Writer)، لذلك لا حاجة لأي حيلة خاصة هنا؛ الناتج مطابق تمامًا لمحتوى ملف Word.
 3) الكشف عن ملفات PDF الممسوحة ضوئيًا (صور بلا طبقة نص): في هذه الحالة لا يوجد
@@ -356,7 +354,159 @@ def convert_with_pdf2docx(pdf_path: str, out_dir: str) -> str:
     if not os.path.exists(out_path):
         raise ConversionError("تعذّر إنشاء ملف Word من هذا الملف عبر محرك النص المباشر.")
 
+    # تصحيح خلل معروف في استخراج النص العربي: بعض الخطوط المضمّنة في PDF
+    # (خاصة الناتجة من Word/طابعات PDF عربية) تُشكّل رباط "اللام+الألف" (لا/
+    # لأ/لإ/لآ) كرمز خط (glyph) رسم واحد، وبعض مكتبات الاستخراج (ومنها
+    # PyMuPDF التي يعتمد عليها pdf2docx) تُخرج حرفَي هذا الرباط بترتيب معكوس
+    # (الألف قبل اللام) بدل الترتيب الصحيح. لا يمكن إصلاح هذا نصيًا بشكل أعمى
+    # لأن نفس التتابع الحرفي "ألف ثم لام" يرد بشكل صحيح تمامًا في كلمات شائعة
+    # جدًا (مثل "مسألة"، "إلى"، "ألف")، لذلك نعتمد فقط على تطابق/تداخل صناديق
+    # الأحرف المحيطة (bbox) من ملف PDF نفسه: تطابق الصندوقين يعني يقينًا أن
+    # الحرفين استُخرجا من رسمة واحدة فعلية (رباط حقيقي)، وعندها فقط يكون
+    # التصحيح آمنًا 100% دون أي التباس مع كلمات أخرى. أي فشل في هذه الخطوة
+    # الإضافية لا يُفشل التحويل؛ يبقى ناتج pdf2docx الأصلي كما هو.
+    try:
+        corrections = _find_arabic_ligature_corrections(pdf_path)
+        if corrections:
+            _apply_text_corrections_to_docx(out_path, corrections)
+    except Exception:  # noqa: BLE001
+        pass
+
     return out_path
+
+
+# رموز الألف في العربية (عادية/همزة فوق/همزة تحت/مدّة) التي تُشكّل رباطًا
+# طباعيًا إلزاميًا مع اللام إذا وردت بعدها مباشرة (لا/لأ/لإ/لآ)
+_ARABIC_ALEF_VARIANTS = ("ا", "أ", "إ", "آ")
+_ARABIC_LAM = "ل"
+
+
+def _split_chars_into_words(chars: list) -> list:
+    """يقسّم قائمة أحرف span واحد (من PyMuPDF rawdict) إلى كلمات، بالاعتماد
+    على الفجوة الأفقية الفعلية بين صناديق الأحرف المتتالية (وليس على وجود
+    حرف مسافة صريح، الذي قد لا يُستخرج دائمًا بشكل منفصل)."""
+    words = []
+    current = []
+    prev_bbox = None
+    for ch in chars:
+        bbox = ch.get("bbox")
+        if not bbox:
+            continue
+        if prev_bbox is not None:
+            gap = min(abs(bbox[0] - prev_bbox[2]), abs(bbox[2] - prev_bbox[0]))
+            char_width = max(bbox[2] - bbox[0], 1e-3)
+            if gap > max(char_width * 1.3, 2.0):
+                if current:
+                    words.append(current)
+                current = []
+        current.append(ch)
+        prev_bbox = bbox
+    if current:
+        words.append(current)
+    return words
+
+
+def _bboxes_overlap_strongly(b1, b2, min_ratio: float = 0.3) -> bool:
+    """يتحقق أن صندوقي حرفين متداخلان بشكل كبير (وليس مجرد تجاور طبيعي بين
+    حرفين متتاليين)، كدليل قوي على أنهما ينتميان لرمز خط (glyph) واحد فعليًا."""
+    x0, y0 = max(b1[0], b2[0]), max(b1[1], b2[1])
+    x1, y1 = min(b1[2], b2[2]), min(b1[3], b2[3])
+    if x1 <= x0 or y1 <= y0:
+        return False
+    inter_area = (x1 - x0) * (y1 - y0)
+    area1 = max((b1[2] - b1[0]) * (b1[3] - b1[1]), 1e-6)
+    area2 = max((b2[2] - b2[0]) * (b2[3] - b2[1]), 1e-6)
+    return (inter_area / min(area1, area2)) > min_ratio
+
+
+def _fix_word_ligature_order(word_chars: list) -> tuple[str, bool]:
+    """يفحص كلمة واحدة (قائمة أحرف مع صناديقها) بحثًا عن رباط لام+ألف معكوس
+    (ألف مباشرة قبل لام بنفس صندوق الرسم تقريبًا)، ويعيد النص بعد التصحيح
+    مع علامة تدل إن تم أي تغيير فعلي."""
+    letters = [ch.get("c", "") for ch in word_chars]
+    changed = False
+    i = 0
+    while i < len(word_chars) - 1:
+        c1, c2 = word_chars[i], word_chars[i + 1]
+        if letters[i] in _ARABIC_ALEF_VARIANTS and letters[i + 1] == _ARABIC_LAM:
+            b1, b2 = c1.get("bbox"), c2.get("bbox")
+            if b1 and b2 and _bboxes_overlap_strongly(b1, b2):
+                letters[i], letters[i + 1] = letters[i + 1], letters[i]
+                changed = True
+        i += 1
+    return "".join(letters), changed
+
+
+def _find_arabic_ligature_corrections(pdf_path: str) -> dict:
+    """يفحص ملف PDF على مستوى الحرف (PyMuPDF rawdict) في كل الصفحات، ويبني
+    قاموس تصحيحات {الكلمة كما استُخرجت (معطوبة): الكلمة الصحيحة} خاصًا بهذا
+    الملف تحديدًا، بالاعتماد حصريًا على تطابق صناديق الأحرف كما هو موضّح في
+    _fix_word_ligature_order. يعيد قاموسًا فارغًا إن تعذّر الفحص (مثلاً PyMuPDF
+    غير متاح)، دون رفع أي استثناء يوقف التحويل."""
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        return {}
+
+    corrections: dict = {}
+    doc = fitz.open(pdf_path)
+    try:
+        for page in doc:
+            raw = page.get_text("rawdict")
+            for block in raw.get("blocks", []):
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        chars = span.get("chars", [])
+                        for word_chars in _split_chars_into_words(chars):
+                            if len(word_chars) < 2:
+                                continue
+                            original = "".join(ch.get("c", "") for ch in word_chars)
+                            fixed, changed = _fix_word_ligature_order(word_chars)
+                            if changed and original and fixed and original != fixed:
+                                corrections[original] = fixed
+    finally:
+        doc.close()
+    return corrections
+
+
+def _apply_text_corrections_to_docx(docx_path: str, corrections: dict) -> None:
+    """يطبّق تصحيحات نصية دقيقة (استبدال كلمات كاملة مؤكَّدة) على كل نصوص
+    ملف DOCX (فقرات المتن والجداول ورؤوس/تذييلات الصفحات)، عبر استبدال داخل
+    كل "run" على حدة (لا يمسّ التنسيق)، ثم يحفظ الملف في مكانه."""
+    if not corrections:
+        return
+
+    from docx import Document
+
+    # نبدأ بالكلمات الأطول أولاً لتفادي أن يطابق استبدال قصير جزءًا من كلمة أطول
+    ordered = sorted(corrections.items(), key=lambda kv: -len(kv[0]))
+
+    def _fix_paragraph(paragraph):
+        for run in paragraph.runs:
+            if not run.text:
+                continue
+            new_text = run.text
+            for wrong, right in ordered:
+                if wrong in new_text:
+                    new_text = new_text.replace(wrong, right)
+            if new_text != run.text:
+                run.text = new_text
+
+    doc = Document(docx_path)
+    for paragraph in doc.paragraphs:
+        _fix_paragraph(paragraph)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    _fix_paragraph(paragraph)
+    for section in doc.sections:
+        for paragraph in section.header.paragraphs:
+            _fix_paragraph(paragraph)
+        for paragraph in section.footer.paragraphs:
+            _fix_paragraph(paragraph)
+
+    doc.save(docx_path)
 
 
 def _docx_text_length(docx_path: str) -> int:
