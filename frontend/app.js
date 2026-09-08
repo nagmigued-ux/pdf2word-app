@@ -11,6 +11,8 @@ const removeFileBtn = document.getElementById("remove-file");
 const convertBtn = document.getElementById("convert-btn");
 const ocrWarning = document.getElementById("ocr-warning");
 const ocrToggle = document.getElementById("ocr-toggle");
+const ocrLangRow = document.getElementById("ocr-lang-row");
+const ocrLangSelect = document.getElementById("ocr-lang-select");
 const progressBox = document.getElementById("progress-box");
 const resultBox = document.getElementById("result-box");
 const errorBox = document.getElementById("error-box");
@@ -28,6 +30,36 @@ let selectedFile = null;
 let direction = null; // "pdf2word" | "word2pdf"
 let currentLang = DEFAULT_LANG;
 let lastErrorCode = null; // لإعادة ترجمة رسالة الخطأ الحالية عند تبديل اللغة
+
+// لغة الواجهة الحالية ليست بالضرورة لغة المستند الممسوح ضوئيًا (OCR)، لذلك
+// نعرض للمستخدم قائمة موسّعة بلغات المستند الفعلية (تُجلب من الخادم) ليختار
+// منها بنفسه، مع اختيار افتراضي معقول مبني على لغة الواجهة الحالية.
+const UI_TO_OCR_DEFAULT = { ar: "ara", en: "eng", fr: "fra", es: "spa", de: "deu" };
+let ocrLanguagesLoaded = false;
+
+async function loadOcrLanguages() {
+  if (ocrLanguagesLoaded) return;
+  try {
+    const res = await fetch("/api/ocr-languages");
+    const data = await res.json();
+    if (Array.isArray(data.languages) && data.languages.length) {
+      ocrLangSelect.innerHTML = "";
+      data.languages.forEach(({ code, name }) => {
+        const opt = document.createElement("option");
+        opt.value = code;
+        opt.textContent = name;
+        ocrLangSelect.appendChild(opt);
+      });
+      const preferred = UI_TO_OCR_DEFAULT[currentLang] || "eng";
+      if ([...ocrLangSelect.options].some((o) => o.value === preferred)) {
+        ocrLangSelect.value = preferred;
+      }
+      ocrLanguagesLoaded = true;
+    }
+  } catch (err) {
+    // إن تعذّر الجلب، يبقى القسم مخفيًا ويُستخدم تخمين لغة الواجهة كخطة بديلة
+  }
+}
 
 // ---------- الترجمة (i18n) ----------
 function t(key) {
@@ -138,12 +170,18 @@ function resetUI() {
   errorBox.classList.add("hidden");
   ocrWarning.classList.add("hidden");
   ocrToggle.checked = false;
+  ocrLangRow.hidden = true;
   dropzone.classList.remove("hidden");
   selectedFile = null;
   direction = null;
   lastErrorCode = null;
   fileInput.value = "";
 }
+
+ocrToggle.addEventListener("change", () => {
+  ocrLangRow.hidden = !ocrToggle.checked;
+  if (ocrToggle.checked) loadOcrLanguages();
+});
 
 function showError(code, fallbackMessage) {
   progressBox.classList.add("hidden");
@@ -177,6 +215,8 @@ async function handleFile(file) {
   fileNameEl.textContent = file.name;
   fileSizeEl.textContent = formatSize(file.size);
   ocrWarning.classList.add("hidden");
+  ocrToggle.checked = false;
+  ocrLangRow.hidden = true;
   updateDirectionTexts();
 
   // فحص مسبق: فقط لملفات PDF، للتأكد هل تحتوي نصًا حقيقيًا أم أنها مسح ضوئي
@@ -238,6 +278,9 @@ convertBtn.addEventListener("click", async () => {
   formData.append("lang", currentLang);
   if (direction === "pdf2word") {
     formData.append("use_ocr", ocrToggle.checked ? "true" : "false");
+    if (ocrToggle.checked && ocrLangSelect.value) {
+      formData.append("doc_lang", ocrLangSelect.value);
+    }
   }
 
   try {
