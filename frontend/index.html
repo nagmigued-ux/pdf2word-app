@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF إلى Word — تحويل احترافي</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-icon">⇄</span>
+      <span class="brand-name" data-i18n-html="brand"></span>
+    </div>
+    <p class="tagline" data-i18n="tagline"></p>
+  </header>
+
+  <!-- زر عائم لتغيير اللغة -->
+  <div id="lang-widget" class="lang-widget">
+    <button type="button" id="lang-fab" class="lang-fab" aria-haspopup="true" aria-expanded="false" title="Language / اللغة">
+      <span class="lang-fab-icon">🌐</span>
+    </button>
+    <ul id="lang-menu" class="lang-menu hidden" role="menu">
+      <li><button type="button" class="lang-option" data-lang="ar" role="menuitem"><span class="lang-flag">🇩🇿</span> العربية</button></li>
+      <li><button type="button" class="lang-option" data-lang="en" role="menuitem"><span class="lang-flag">🇬🇧</span> English</button></li>
+      <li><button type="button" class="lang-option" data-lang="fr" role="menuitem"><span class="lang-flag">🇫🇷</span> Français</button></li>
+      <li><button type="button" class="lang-option" data-lang="es" role="menuitem"><span class="lang-flag">🇪🇸</span> Español</button></li>
+      <li><button type="button" class="lang-option" data-lang="de" role="menuitem"><span class="lang-flag">🇩🇪</span> Deutsch</button></li>
+    </ul>
+  </div>
+
+  <main class="container">
+
+    <section class="card" id="upload-card">
+      <div id="dropzone" class="dropzone">
+        <input type="file" id="file-input" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+        <div class="dropzone-icon">📄</div>
+        <p class="dropzone-title" data-i18n="dropzoneTitle"></p>
+        <p class="dropzone-sub" data-i18n="or"></p>
+        <button type="button" id="browse-btn" class="btn btn-primary" data-i18n="browseBtn"></button>
+        <p class="dropzone-hint" data-i18n="dropzoneHint"></p>
+      </div>
+
+      <div id="file-info" class="file-info hidden">
+        <div class="file-row">
+          <span class="file-icon">📄</span>
+          <div class="file-meta">
+            <span id="file-name" class="file-name"></span>
+            <span id="file-size" class="file-size"></span>
+          </div>
+          <button type="button" id="remove-file" class="btn-icon" data-i18n-title="removeFile">✕</button>
+        </div>
+
+        <div id="ocr-warning" class="notice hidden">
+          <span data-i18n="ocrNotice"></span>
+          <label class="checkbox-row">
+            <input type="checkbox" id="ocr-toggle">
+            <span data-i18n="ocrToggle"></span>
+          </label>
+        </div>
+
+        <button type="button" id="convert-btn" class="btn btn-primary btn-block" data-i18n="convertBtn"></button>
+      </div>
+
+      <div id="progress-box" class="progress-box hidden">
+        <div class="spinner"></div>
+        <p id="progress-text" data-i18n="progressText"></p>
+      </div>
+
+      <div id="result-box" class="result-box hidden">
+        <div class="result-icon">✅</div>
+        <p class="result-title" data-i18n="resultTitle"></p>
+        <a id="download-link" class="btn btn-success" download data-i18n="downloadBtn"></a>
+        <button type="button" id="convert-another" class="btn btn-ghost" data-i18n="convertAnother"></button>
+      </div>
+
+      <div id="error-box" class="error-box hidden">
+        <div class="result-icon">⚠️</div>
+        <p id="error-text" class="error-text"></p>
+        <button type="button" id="try-again" class="btn btn-ghost" data-i18n="tryAgain"></button>
+      </div>
+    </section>
+
+    <section class="features">
+      <div class="feature">
+        <span class="feature-icon">🔒</span>
+        <h3 data-i18n="feat1Title"></h3>
+        <p data-i18n="feat1Text"></p>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">🎯</span>
+        <h3 data-i18n="feat2Title"></h3>
+        <p data-i18n="feat2Text"></p>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">⚡</span>
+        <h3 data-i18n="feat3Title"></h3>
+        <p data-i18n="feat3Text"></p>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <p>© <span id="year"></span> <span data-i18n="rights"></span></p>
+  </footer>
+
+<script src="i18n.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
