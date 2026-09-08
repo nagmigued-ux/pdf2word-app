@@ -33,6 +33,8 @@ from converter import (
     inspect_pdf,
     new_job_dir,
     resolve_ocr_lang,
+    build_ocr_lang_string,
+    OCR_LANGUAGE_CHOICES,
 )
 
 WORD_EXTENSIONS = (".docx", ".doc")
@@ -93,6 +95,13 @@ def health():
     return jsonify(status="ok")
 
 
+@app.get("/api/ocr-languages")
+def ocr_languages():
+    """قائمة لغات المستند المدعومة صراحةً للتعرف الضوئي (OCR)، لعرضها للمستخدم
+    ليختار لغة الملف الممسوح ضوئيًا الفعلية (بغض النظر عن لغة واجهة الموقع)."""
+    return jsonify(languages=[{"code": code, "name": name} for code, name in OCR_LANGUAGE_CHOICES])
+
+
 @app.errorhandler(413)
 def handle_too_large(_exc):
     return jsonify(error="الملف أكبر من الحد المسموح به (50 ميغابايت).", code="file_too_large"), 413
@@ -141,7 +150,11 @@ def convert():
         with CONVERSION_SEMAPHORE:
             if is_pdf_input:
                 use_ocr = request.form.get("use_ocr", "false").lower() == "true"
-                ocr_lang = resolve_ocr_lang(get_ui_lang())
+                # لغة المستند التي اختارها المستخدم صراحةً (قد تختلف عن لغة الواجهة)؛
+                # إن لم يحدد شيئًا صالحًا، نعود للتخمين الافتراضي من لغة الواجهة.
+                ocr_lang = build_ocr_lang_string(request.form.get("doc_lang")) or resolve_ocr_lang(
+                    get_ui_lang()
+                )
                 output_path = convert_pdf_to_docx(
                     input_path, job_dir, use_ocr=use_ocr, ocr_lang=ocr_lang
                 )
