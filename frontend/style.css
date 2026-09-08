@@ -215,6 +215,26 @@ body {
   cursor: pointer;
 }
 
+.ocr-lang-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  font-weight: 600;
+}
+
+.ocr-lang-row select {
+  flex: 1;
+  min-width: 140px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--warning-border);
+  background: #fff;
+  color: var(--text);
+  font-size: 13px;
+}
+
 .progress-box {
   text-align: center;
   padding: 40px 10px;
