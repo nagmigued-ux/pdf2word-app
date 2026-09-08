@@ -2,9 +2,11 @@
 محرك تحويل ثنائي الاتجاه بين PDF و Word (DOCX) - يحافظ على محتوى الملف الأصلي دون أي تغيير.
 
 الاستراتيجية:
-1) PDF → Word: نستخدم LibreOffice (headless) لقراءة نص PDF الحقيقي (وليس صورة)
-   وإعادة بنائه كمستند Word قابل للتحرير، مع الحفاظ على الفقرات والجداول والصور
-   والتنسيق قدر الإمكان، دون تعديل أي حرف من النص.
+1) PDF → Word: نجرّب أولاً مكتبة pdf2docx التي تحلّل محتوى الصفحة مباشرة (نصوصًا
+   وجداول وصورًا) وتعيد بناءها كفقرات وجمل Word حقيقية قابلة للتحرير والنسخ (أقرب
+   لـ"نسخ ولصق" النص الفعلي)، ثم نتحقق أن الناتج يحتوي نصًا حقيقيًا يقارب حجم نص
+   المصدر. إن فشل هذا المحرك أو أنتج نصًا ناقصًا (كأن يضع الصفحات كصور)، نعود
+   لمحرك LibreOffice (headless) كخطة بديلة موثوقة.
 2) Word → PDF: اتجاه مدعوم أصليًا وبشكل موثوق جدًا في LibreOffice (تصدير PDF من
    Writer)، لذلك لا حاجة لأي حيلة خاصة هنا؛ الناتج مطابق تمامًا لمحتوى ملف Word.
 3) الكشف عن ملفات PDF الممسوحة ضوئيًا (صور بلا طبقة نص): في هذه الحالة لا يوجد
@@ -15,6 +17,7 @@
 
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 import uuid
@@ -39,6 +42,38 @@ class InvalidPdfError(ConversionError):
 
 class NeedsOcrError(ConversionError):
     """يُرفع عندما يكون الملف صورة ممسوحة ضوئيًا بلا نص، ويحتاج تفعيل OCR صراحة."""
+
+
+class ConversionTimeoutError(ConversionError):
+    """يُرفع عندما تستغرق عملية التحويل وقتًا أطول من الحد المسموح به (ملف كبير/معقد جدًا)."""
+
+
+# مهلتان منفصلتان لمحرّكي PDF→Word (نحاول pdf2docx أولاً، ثم LibreOffice كخطة
+# بديلة إن فشل الأول أو أنتج نصًا ناقصًا) بدل مهلة واحدة كبيرة، حتى يصل خطأ
+# واضح للمستخدم خلال دقائق معقولة بدل الانتظار إلى ما لا نهاية على ملف معطوب.
+PDF2DOCX_TIMEOUT = int(os.environ.get("PDF2DOCX_TIMEOUT", "180"))
+LIBREOFFICE_TIMEOUT = int(os.environ.get("LIBREOFFICE_TIMEOUT", "180"))
+
+
+def _run_with_timeout(func, seconds: int):
+    """ينفّذ func() مع مهلة زمنية قصوى (SIGALRM، متاحة على Linux/عمّال gunicorn
+    المتزامنين). إن لم تتوفر SIGALRM (مثلاً في بيئة غير POSIX)، يُنفَّذ بلا مهلة."""
+    if not seconds or not hasattr(signal, "SIGALRM"):
+        return func()
+
+    def _handle_alarm(signum, frame):
+        raise ConversionTimeoutError(
+            "استغرقت عملية التحويل وقتًا طويلًا جدًا. يمكنك تجربة تفعيل خيار "
+            "«التعرف الضوئي على النص (OCR)» كبديل عملي، أو تجربة ملف أصغر."
+        )
+
+    previous_handler = signal.signal(signal.SIGALRM, _handle_alarm)
+    signal.alarm(seconds)
+    try:
+        return func()
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 
 # يربط رمز لغة الواجهة (ar/en/fr/es/de) بحزمة لغة Tesseract المناسبة للتعرّف
@@ -216,7 +251,10 @@ def _run_soffice_convert(
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        raise ConversionError("استغرقت عملية التحويل وقتًا طويلًا جدًا. جرّب ملفًا أصغر.") from exc
+        raise ConversionTimeoutError(
+            "استغرقت عملية التحويل وقتًا طويلًا جدًا. يمكنك تجربة تفعيل خيار "
+            "«التعرف الضوئي على النص (OCR)» كبديل عملي، أو تجربة ملف أصغر."
+        ) from exc
     finally:
         shutil.rmtree(user_profile_dir, ignore_errors=True)
 
@@ -233,7 +271,7 @@ def _run_soffice_convert(
     return produced_path
 
 
-def convert_with_libreoffice(pdf_path: str, out_dir: str, timeout: int = 120) -> str:
+def convert_with_libreoffice(pdf_path: str, out_dir: str, timeout: int = LIBREOFFICE_TIMEOUT) -> str:
     """
     يحوّل PDF إلى DOCX باستخدام LibreOffice في وضع headless.
     يعيد المسار الكامل لملف DOCX الناتج.
@@ -250,7 +288,7 @@ def convert_with_libreoffice(pdf_path: str, out_dir: str, timeout: int = 120) ->
     )
 
 
-def convert_docx_to_pdf(docx_path: str, out_dir: str, timeout: int = 120) -> str:
+def convert_docx_to_pdf(docx_path: str, out_dir: str, timeout: int = LIBREOFFICE_TIMEOUT) -> str:
     """
     يحوّل ملف Word (doc/docx) إلى PDF باستخدام LibreOffice. هذا اتجاه مدعوم
     أصليًا وموثوق في LibreOffice (تصدير Writer إلى PDF)، فلا تُغيَّر أي فقرة أو
@@ -295,10 +333,74 @@ def convert_with_ocr(pdf_path: str, out_dir: str, lang: str = DEFAULT_OCR_LANG) 
     return out_path
 
 
+def convert_with_pdf2docx(pdf_path: str, out_dir: str) -> str:
+    """
+    يحوّل PDF إلى DOCX عبر مكتبة pdf2docx: تحلّل محتوى الصفحة مباشرة (نصوصًا
+    وجداول وصورًا) وتعيد بناءها كفقرات وجمل Word حقيقية قابلة للتحرير والنسخ،
+    بدل الاعتماد فقط على مرشّح استيراد PDF في LibreOffice الذي قد يضع الصفحة
+    كاملة كصورة واحدة (بلا نص حقيقي) مع بعض التخطيطات المعقدة أو الخطوط
+    المضمّنة غير القياسية — وهذا هو المسار المفضّل لأنه أقرب لـ"نسخ ولصق"
+    النص الفعلي دون أي تحويل إلى صور.
+    """
+    from pdf2docx import Converter
+
+    base_name = os.path.splitext(os.path.basename(pdf_path))[0]
+    out_path = os.path.join(out_dir, f"{base_name}.docx")
+
+    cv = Converter(pdf_path)
+    try:
+        cv.convert(out_path)
+    finally:
+        cv.close()
+
+    if not os.path.exists(out_path):
+        raise ConversionError("تعذّر إنشاء ملف Word من هذا الملف عبر محرك النص المباشر.")
+
+    return out_path
+
+
+def _docx_text_length(docx_path: str) -> int:
+    """يحسب إجمالي عدد الأحرف النصية الفعلية داخل ملف DOCX. نمشي على شجرة XML
+    الكاملة لجسم المستند (word/document.xml) ونجمع كل عناصر <w:t> بدل الاكتفاء
+    بواجهة python-docx العليا (doc.paragraphs/doc.tables)، لأن بعض محركات
+    التحويل (مثل مرشّح استيراد PDF في LibreOffice) قد تضع النص داخل "أطر"
+    (text frames) مرتبطة بموضع ثابت في الصفحة بدل فقرات المستند العادية،
+    وهذه الأطر لا تظهر في doc.paragraphs رغم احتوائها نصًا حقيقيًا فعلاً."""
+    from docx import Document
+
+    doc = Document(docx_path)
+    total = 0
+    for node in doc.element.body.iter():
+        if node.tag.endswith("}t") and node.text:
+            total += len(node.text)
+    return total
+
+
+def _extract_pdf_text_length(pdf_path: str, max_pages: int = 200) -> int:
+    """يحسب إجمالي طول النص الحقيقي المستخرج من ملف PDF المصدر (كل الصفحات
+    تقريبًا)، ليُقارَن بطول النص في ملف Word الناتج والتأكد أن التحويل نقل
+    النص فعليًا ولم يهمل معظمه (كأن يضع الصفحات كصور بلا نص)."""
+    total = 0
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages[:max_pages]:
+                total += len(page.extract_text() or "")
+    except Exception:  # noqa: BLE001
+        pass
+    return total
+
+
 def convert_pdf_to_docx(
     pdf_path: str, out_dir: str, use_ocr: bool = False, ocr_lang: str = DEFAULT_OCR_LANG
 ) -> str:
-    """نقطة الدخول الرئيسية: تفحص الملف ثم تختار مسار التحويل المناسب."""
+    """نقطة الدخول الرئيسية: تفحص الملف ثم تختار مسار التحويل المناسب.
+
+    للملفات النصية (غير الممسوحة ضوئيًا)، نجرّب أولاً pdf2docx لأنه ينقل النص
+    الحقيقي حرفيًا كفقرات Word قابلة للتحرير (أقرب لـ"نسخ ولصق"). نتحقق أن
+    الناتج يحتوي فعلاً نصًا يقارب حجم نص المصدر (وليس صفحات كصور)، وإلا نعود
+    لمحرك LibreOffice كخطة بديلة. إن فشل الاثنان أو استغرقا وقتًا طويلًا جدًا،
+    يصل خطأ واضح للمستخدم مع اقتراح تفعيل OCR كبديل عملي.
+    """
     insight = inspect_pdf(pdf_path)
 
     if use_ocr:
@@ -310,7 +412,35 @@ def convert_pdf_to_docx(
             "فعّل خيار «التعرف الضوئي على النص (OCR)» لتحويله."
         )
 
-    return convert_with_libreoffice(pdf_path, out_dir)
+    source_text_len = _extract_pdf_text_length(pdf_path)
+
+    pdf2docx_path = None
+    produced_len = 0
+    try:
+        pdf2docx_path = _run_with_timeout(
+            lambda: convert_with_pdf2docx(pdf_path, out_dir), PDF2DOCX_TIMEOUT
+        )
+        produced_len = _docx_text_length(pdf2docx_path)
+    except ConversionTimeoutError:
+        pdf2docx_path = None
+    except Exception:  # noqa: BLE001
+        # أي فشل في المحرك الأول (pdf2docx) لا يجب أن يوقف العملية بالكامل؛
+        # ننتقل لمحرك LibreOffice كخطة بديلة موثوقة
+        pdf2docx_path = None
+
+    # نقبل ناتج pdf2docx فقط إن كان يحتوي نصًا حقيقيًا يقارب حجم نص المصدر
+    # (٪40 كحد أدنى تحوّطًا لاختلافات بسيطة في طريقة استخراج النص)، وإلا فهذا
+    # مؤشر أن المحرك لم ينقل النص فعليًا (كأن يضع الصفحات كصور)
+    if pdf2docx_path and (source_text_len == 0 or produced_len >= source_text_len * 0.4):
+        return pdf2docx_path
+
+    if pdf2docx_path and os.path.exists(pdf2docx_path):
+        try:
+            os.remove(pdf2docx_path)
+        except OSError:
+            pass
+
+    return convert_with_libreoffice(pdf_path, out_dir, timeout=LIBREOFFICE_TIMEOUT)
 
 
 def new_job_dir(base_tmp: str) -> str:
