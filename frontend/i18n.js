@@ -40,6 +40,11 @@ const TRANSLATIONS = {
     err_unknown: "حدث خطأ غير متوقع. حاول مرة أخرى.",
     err_file_too_large: "حجم الملف يتجاوز الحد الأقصى المسموح به (50 ميغابايت).",
     err_network: "تعذّر الاتصال بالخادم. تحقق من اتصالك بالإنترنت وحاول مجددًا.",
+    err_conversion_timeout:
+      "استغرق تحويل هذا الملف وقتًا طويلًا جدًا (ملف كبير أو معقّد). يمكنك تجربة التعرف الضوئي على النص (OCR) كبديل أدناه، أو تجربة ملف أصغر.",
+    ocrRetryNotice:
+      "يمكنك إعادة محاولة تحويل هذا الملف نفسه باستخدام التعرف الضوئي على النص (OCR) بدل النقل الحرفي، مع العلم أن هذه الطريقة قد تحتوي أخطاء طفيفة بحسب جودة الملف.",
+    retryWithOcrBtn: "إعادة المحاولة عبر OCR",
   },
 
   en: {
@@ -81,6 +86,11 @@ const TRANSLATIONS = {
     err_unknown: "An unexpected error occurred. Please try again.",
     err_file_too_large: "The file exceeds the maximum allowed size (50 MB).",
     err_network: "Could not reach the server. Check your internet connection and try again.",
+    err_conversion_timeout:
+      "Converting this file took too long (it's large or complex). You can try Optical Character Recognition (OCR) as an alternative below, or try a smaller file.",
+    ocrRetryNotice:
+      "You can retry converting this same file using Optical Character Recognition (OCR) instead of a literal transfer — note that this method may contain minor errors depending on file quality.",
+    retryWithOcrBtn: "Retry with OCR",
   },
 
   fr: {
@@ -122,6 +132,11 @@ const TRANSLATIONS = {
     err_unknown: "Une erreur inattendue s'est produite. Veuillez réessayer.",
     err_file_too_large: "Le fichier dépasse la taille maximale autorisée (50 Mo).",
     err_network: "Impossible de contacter le serveur. Vérifiez votre connexion internet et réessayez.",
+    err_conversion_timeout:
+      "La conversion de ce fichier a pris trop de temps (fichier volumineux ou complexe). Vous pouvez essayer la reconnaissance optique de caractères (OCR) ci-dessous, ou essayer un fichier plus petit.",
+    ocrRetryNotice:
+      "Vous pouvez réessayer de convertir ce même fichier avec la reconnaissance optique de caractères (OCR) au lieu d'un transfert littéral — notez que cette méthode peut contenir de légères erreurs selon la qualité du fichier.",
+    retryWithOcrBtn: "Réessayer avec l'OCR",
   },
 
   es: {
@@ -163,6 +178,11 @@ const TRANSLATIONS = {
     err_unknown: "Ocurrió un error inesperado. Inténtalo de nuevo.",
     err_file_too_large: "El archivo supera el tamaño máximo permitido (50 MB).",
     err_network: "No se pudo conectar con el servidor. Comprueba tu conexión a internet e inténtalo de nuevo.",
+    err_conversion_timeout:
+      "La conversión de este archivo tardó demasiado (es grande o complejo). Puedes probar el reconocimiento óptico de caracteres (OCR) a continuación, o probar con un archivo más pequeño.",
+    ocrRetryNotice:
+      "Puedes reintentar convertir este mismo archivo usando el reconocimiento óptico de caracteres (OCR) en lugar de una transferencia literal — ten en cuenta que este método puede contener pequeños errores según la calidad del archivo.",
+    retryWithOcrBtn: "Reintentar con OCR",
   },
 
   de: {
@@ -204,6 +224,11 @@ const TRANSLATIONS = {
     err_unknown: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuchen Sie es erneut.",
     err_file_too_large: "Die Datei überschreitet die maximal zulässige Größe (50 MB).",
     err_network: "Der Server konnte nicht erreicht werden. Prüfen Sie Ihre Internetverbindung und versuchen Sie es erneut.",
+    err_conversion_timeout:
+      "Die Umwandlung dieser Datei hat zu lange gedauert (groß oder komplex). Sie können unten die optische Zeichenerkennung (OCR) als Alternative ausprobieren oder eine kleinere Datei verwenden.",
+    ocrRetryNotice:
+      "Sie können die Umwandlung derselben Datei mit optischer Zeichenerkennung (OCR) statt einer wörtlichen Übertragung erneut versuchen — beachten Sie, dass diese Methode je nach Dateiqualität kleinere Fehler enthalten kann.",
+    retryWithOcrBtn: "Mit OCR erneut versuchen",
   },
 };
 
