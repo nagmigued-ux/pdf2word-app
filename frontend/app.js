@@ -17,6 +17,9 @@ const progressBox = document.getElementById("progress-box");
 const resultBox = document.getElementById("result-box");
 const errorBox = document.getElementById("error-box");
 const errorText = document.getElementById("error-text");
+const errorOcrRetry = document.getElementById("error-ocr-retry");
+const errorOcrLangSelect = document.getElementById("error-ocr-lang-select");
+const retryOcrBtn = document.getElementById("retry-ocr-btn");
 const downloadLink = document.getElementById("download-link");
 const convertAnotherBtn = document.getElementById("convert-another");
 const tryAgainBtn = document.getElementById("try-again");
@@ -35,30 +38,39 @@ let lastErrorCode = null; // لإعادة ترجمة رسالة الخطأ ال�
 // نعرض للمستخدم قائمة موسّعة بلغات المستند الفعلية (تُجلب من الخادم) ليختار
 // منها بنفسه، مع اختيار افتراضي معقول مبني على لغة الواجهة الحالية.
 const UI_TO_OCR_DEFAULT = { ar: "ara", en: "eng", fr: "fra", es: "spa", de: "deu" };
-let ocrLanguagesLoaded = false;
+let ocrLanguageList = null;
 
-async function loadOcrLanguages() {
-  if (ocrLanguagesLoaded) return;
+async function fetchOcrLanguages() {
+  if (ocrLanguageList) return ocrLanguageList;
   try {
     const res = await fetch("/api/ocr-languages");
     const data = await res.json();
     if (Array.isArray(data.languages) && data.languages.length) {
-      ocrLangSelect.innerHTML = "";
-      data.languages.forEach(({ code, name }) => {
-        const opt = document.createElement("option");
-        opt.value = code;
-        opt.textContent = name;
-        ocrLangSelect.appendChild(opt);
-      });
-      const preferred = UI_TO_OCR_DEFAULT[currentLang] || "eng";
-      if ([...ocrLangSelect.options].some((o) => o.value === preferred)) {
-        ocrLangSelect.value = preferred;
-      }
-      ocrLanguagesLoaded = true;
+      ocrLanguageList = data.languages;
     }
   } catch (err) {
-    // إن تعذّر الجلب، يبقى القسم مخفيًا ويُستخدم تخمين لغة الواجهة كخطة بديلة
+    // إن تعذّر الجلب، تبقى القائمة فارغة ويُستخدم تخمين لغة الواجهة كخطة بديلة
   }
+  return ocrLanguageList || [];
+}
+
+function populateOcrSelect(selectEl, languages) {
+  selectEl.innerHTML = "";
+  languages.forEach(({ code, name }) => {
+    const opt = document.createElement("option");
+    opt.value = code;
+    opt.textContent = name;
+    selectEl.appendChild(opt);
+  });
+  const preferred = UI_TO_OCR_DEFAULT[currentLang] || "eng";
+  if ([...selectEl.options].some((o) => o.value === preferred)) {
+    selectEl.value = preferred;
+  }
+}
+
+async function loadOcrLanguages() {
+  const languages = await fetchOcrLanguages();
+  if (languages.length) populateOcrSelect(ocrLangSelect, languages);
 }
 
 // ---------- الترجمة (i18n) ----------
@@ -168,6 +180,7 @@ function resetUI() {
   progressBox.classList.add("hidden");
   resultBox.classList.add("hidden");
   errorBox.classList.add("hidden");
+  errorOcrRetry.classList.add("hidden");
   ocrWarning.classList.add("hidden");
   ocrToggle.checked = false;
   ocrLangRow.hidden = true;
@@ -183,13 +196,23 @@ ocrToggle.addEventListener("change", () => {
   if (ocrToggle.checked) loadOcrLanguages();
 });
 
-function showError(code, fallbackMessage) {
+async function showError(code, fallbackMessage) {
   progressBox.classList.add("hidden");
   fileInfo.classList.add("hidden");
   dropzone.classList.add("hidden");
   errorBox.classList.remove("hidden");
   lastErrorCode = code;
   errorText.textContent = code ? t(code) : fallbackMessage || t("err_unknown");
+
+  // عند انتهاء المهلة الزمنية لتحويل ملف PDF نصي، نعرض خيار إعادة المحاولة
+  // مباشرة عبر OCR (بدون إعادة رفع الملف)، لأن هذا بديل عملي فوري
+  if (code === "err_conversion_timeout" && direction === "pdf2word" && selectedFile) {
+    errorOcrRetry.classList.remove("hidden");
+    const languages = await fetchOcrLanguages();
+    if (languages.length) populateOcrSelect(errorOcrLangSelect, languages);
+  } else {
+    errorOcrRetry.classList.add("hidden");
+  }
 }
 
 // ---------- التعامل مع اختيار الملف ----------
@@ -267,19 +290,22 @@ tryAgainBtn.addEventListener("click", resetUI);
 convertAnotherBtn.addEventListener("click", resetUI);
 
 // ---------- التحويل ----------
-convertBtn.addEventListener("click", async () => {
+async function runConversion({ forceOcr = false } = {}) {
   if (!selectedFile) return;
 
   fileInfo.classList.add("hidden");
+  errorBox.classList.add("hidden");
   progressBox.classList.remove("hidden");
 
   const formData = new FormData();
   formData.append("file", selectedFile);
   formData.append("lang", currentLang);
   if (direction === "pdf2word") {
-    formData.append("use_ocr", ocrToggle.checked ? "true" : "false");
-    if (ocrToggle.checked && ocrLangSelect.value) {
-      formData.append("doc_lang", ocrLangSelect.value);
+    const useOcr = forceOcr || ocrToggle.checked;
+    formData.append("use_ocr", useOcr ? "true" : "false");
+    if (useOcr) {
+      const langVal = forceOcr ? errorOcrLangSelect.value : ocrLangSelect.value;
+      if (langVal) formData.append("doc_lang", langVal);
     }
   }
 
@@ -312,7 +338,10 @@ convertBtn.addEventListener("click", async () => {
     progressBox.classList.add("hidden");
     showError("err_network");
   }
-});
+}
+
+convertBtn.addEventListener("click", () => runConversion());
+retryOcrBtn.addEventListener("click", () => runConversion({ forceOcr: true }));
 
 // ---------- التهيئة الأولية ----------
 applyLanguage(detectInitialLang());
