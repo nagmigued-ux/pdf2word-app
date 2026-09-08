@@ -28,5 +28,7 @@ WORKDIR /app/backend
 ENV PORT=8000
 EXPOSE 8000
 
-# gunicorn: عدة عمّال، ومهلة كافية لأن LibreOffice قد يستغرق بضع ثوانٍ للملفات الكبيرة
-CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers 3 --timeout 180 app:app"]
+# gunicorn: عدة عمّال، ومهلة أكبر من مجموع مهلتي pdf2docx وLibreOffice الداخليتين
+# (180 + 180 ثانية) + هامش أمان، حتى لا يُقتَل العامل قبل أن تصل رسالة الخطأ
+# الواضحة للمستخدم من داخل التطبيق نفسه
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers 3 --timeout 420 app:app"]
