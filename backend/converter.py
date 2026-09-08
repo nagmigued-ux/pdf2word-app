@@ -42,8 +42,9 @@ class NeedsOcrError(ConversionError):
 
 
 # يربط رمز لغة الواجهة (ar/en/fr/es/de) بحزمة لغة Tesseract المناسبة للتعرّف
-# الضوئي. نضيف eng دائمًا كلغة احتياطية لأن كثيرًا من المستندات تحتوي كلمات أو
-# أرقام إنجليزية حتى لو كانت اللغة الأساسية غير ذلك.
+# الضوئي، وتُستخدم كقيمة افتراضية فقط إن لم يحدد المستخدم لغة المستند صراحةً.
+# نضيف eng دائمًا كلغة احتياطية لأن كثيرًا من المستندات تحتوي كلمات أو أرقام
+# إنجليزية حتى لو كانت اللغة الأساسية غير ذلك.
 OCR_LANG_MAP = {
     "ar": "ara+eng",
     "en": "eng",
@@ -56,6 +57,72 @@ DEFAULT_OCR_LANG = "eng"
 
 def resolve_ocr_lang(ui_lang: str) -> str:
     return OCR_LANG_MAP.get((ui_lang or "").lower(), DEFAULT_OCR_LANG)
+
+
+# قائمة موسّعة بلغات المستند الفعلية (وليس لغة الواجهة) التي يمكن للمستخدم
+# اختيارها صراحةً عند استخدام OCR لملف PDF ممسوح ضوئيًا، لأن لغة المستند قد
+# تختلف تمامًا عن لغة واجهة الموقع. الصورة (Docker) تُثبّت tesseract-ocr-all
+# التي تحتوي كل حزم اللغات هذه وأكثر. كل عنصر: (رمز Tesseract، الاسم بلغته
+# الأصلية) — نستخدم الاسم الأصلي بدل الترجمة لتفادي الحاجة لترجمة 40 اسم لغة
+# إلى 5 لغات واجهة مختلفة.
+OCR_LANGUAGE_CHOICES = [
+    ("ara", "العربية"),
+    ("eng", "English"),
+    ("fra", "Français"),
+    ("spa", "Español"),
+    ("deu", "Deutsch"),
+    ("ita", "Italiano"),
+    ("por", "Português"),
+    ("rus", "Русский"),
+    ("chi_sim", "中文（简体）"),
+    ("chi_tra", "中文（繁體）"),
+    ("jpn", "日本語"),
+    ("kor", "한국어"),
+    ("tur", "Türkçe"),
+    ("nld", "Nederlands"),
+    ("pol", "Polski"),
+    ("swe", "Svenska"),
+    ("ell", "Ελληνικά"),
+    ("heb", "עברית"),
+    ("hin", "हिन्दी"),
+    ("urd", "اردو"),
+    ("fas", "فارسی"),
+    ("ind", "Bahasa Indonesia"),
+    ("tha", "ไทย"),
+    ("vie", "Tiếng Việt"),
+    ("ukr", "Українська"),
+    ("ces", "Čeština"),
+    ("ron", "Română"),
+    ("hun", "Magyar"),
+    ("bul", "Български"),
+    ("srp", "Српски"),
+    ("hrv", "Hrvatski"),
+    ("slk", "Slovenčina"),
+    ("fin", "Suomi"),
+    ("dan", "Dansk"),
+    ("nor", "Norsk"),
+    ("ben", "বাংলা"),
+    ("amh", "አማርኛ"),
+    ("msa", "Bahasa Melayu"),
+    ("aze", "Azərbaycan"),
+    ("kat", "ქართული"),
+    ("hye", "Հայերեն"),
+]
+ALLOWED_OCR_CODES = {code for code, _ in OCR_LANGUAGE_CHOICES}
+
+
+def build_ocr_lang_string(doc_lang_code: str | None) -> str | None:
+    """
+    يبني معرّف لغة Tesseract (مثل "ara+eng") من رمز لغة مستند اختاره المستخدم
+    صراحةً (من OCR_LANGUAGE_CHOICES). يعيد None إن كان الرمز غير معروف/فارغ،
+    وعندها يُستخدم resolve_ocr_lang(ui_lang) كقيمة افتراضية بدلاً منه.
+    """
+    code = (doc_lang_code or "").strip()
+    if code not in ALLOWED_OCR_CODES:
+        return None
+    if code == "eng":
+        return "eng"
+    return f"{code}+eng"
 
 
 @dataclass
