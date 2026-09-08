@@ -27,6 +27,7 @@ from converter import (
     convert_pdf_to_docx,
     convert_docx_to_pdf,
     ConversionError,
+    ConversionTimeoutError,
     EncryptedPdfError,
     InvalidPdfError,
     NeedsOcrError,
@@ -173,6 +174,9 @@ def convert():
     except NeedsOcrError as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
         return jsonify(error=str(exc), code="needs_ocr"), 422
+    except ConversionTimeoutError as exc:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        return jsonify(error=str(exc), code="conversion_timeout"), 422
     except ConversionError as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
         return jsonify(error=str(exc), code="conversion_failed"), 422
