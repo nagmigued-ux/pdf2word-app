@@ -14,6 +14,7 @@ const TRANSLATIONS = {
     ocrNotice:
       "يبدو أن هذا الملف عبارة عن صفحات ممسوحة ضوئيًا (صور) ولا يحتوي على نص حقيقي. يمكنك تفعيل خيار «التعرف الضوئي على النص (OCR)» أدناه، مع العلم أن هذه الطريقة تتعرّف على الحروف من الصورة وقد تحتوي على أخطاء طفيفة بحسب جودة المسح.",
     ocrToggle: "تفعيل التعرف الضوئي على النص (OCR)",
+    ocrLangLabel: "لغة المستند (لتحسين دقة OCR):",
     convertToWordBtn: "تحويل إلى Word",
     convertToPdfBtn: "تحويل إلى PDF",
     progressText: "جارٍ تحويل الملف، الرجاء الانتظار…",
@@ -54,6 +55,7 @@ const TRANSLATIONS = {
     ocrNotice:
       "This file looks like a scanned document (images) with no real text. You can enable “Optical Character Recognition (OCR)” below — note that OCR recognizes characters from the image and may contain minor errors depending on scan quality.",
     ocrToggle: "Enable text recognition (OCR)",
+    ocrLangLabel: "Document language (improves OCR accuracy):",
     convertToWordBtn: "Convert to Word",
     convertToPdfBtn: "Convert to PDF",
     progressText: "Converting your file, please wait…",
@@ -94,6 +96,7 @@ const TRANSLATIONS = {
     ocrNotice:
       "Ce fichier semble être un document numérisé (images) sans texte réel. Vous pouvez activer la « reconnaissance optique de caractères (OCR) » ci-dessous — notez que l'OCR reconnaît les caractères à partir de l'image et peut contenir de légères erreurs selon la qualité du scan.",
     ocrToggle: "Activer la reconnaissance de texte (OCR)",
+    ocrLangLabel: "Langue du document (améliore la précision de l'OCR) :",
     convertToWordBtn: "Convertir en Word",
     convertToPdfBtn: "Convertir en PDF",
     progressText: "Conversion de votre fichier en cours, veuillez patienter…",
@@ -134,6 +137,7 @@ const TRANSLATIONS = {
     ocrNotice:
       "Este archivo parece ser un documento escaneado (imágenes) sin texto real. Puedes activar el «reconocimiento óptico de caracteres (OCR)» a continuación; ten en cuenta que el OCR reconoce los caracteres a partir de la imagen y puede contener pequeños errores según la calidad del escaneo.",
     ocrToggle: "Activar reconocimiento de texto (OCR)",
+    ocrLangLabel: "Idioma del documento (mejora la precisión del OCR):",
     convertToWordBtn: "Convertir a Word",
     convertToPdfBtn: "Convertir a PDF",
     progressText: "Convirtiendo tu archivo, por favor espera…",
@@ -174,6 +178,7 @@ const TRANSLATIONS = {
     ocrNotice:
       "Diese Datei scheint ein gescanntes Dokument (Bilder) ohne echten Text zu sein. Sie können unten die „optische Zeichenerkennung (OCR)“ aktivieren — beachten Sie, dass OCR Zeichen aus dem Bild erkennt und je nach Scanqualität kleinere Fehler enthalten kann.",
     ocrToggle: "Texterkennung (OCR) aktivieren",
+    ocrLangLabel: "Dokumentsprache (verbessert die OCR-Genauigkeit):",
     convertToWordBtn: "In Word umwandeln",
     convertToPdfBtn: "In PDF umwandeln",
     progressText: "Ihre Datei wird umgewandelt, bitte warten…",
