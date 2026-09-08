@@ -82,6 +82,14 @@
       <div id="error-box" class="error-box hidden">
         <div class="result-icon">⚠️</div>
         <p id="error-text" class="error-text"></p>
+        <div id="error-ocr-retry" class="notice hidden">
+          <span data-i18n="ocrRetryNotice"></span>
+          <label class="ocr-lang-row" id="error-ocr-lang-row">
+            <span data-i18n="ocrLangLabel"></span>
+            <select id="error-ocr-lang-select"></select>
+          </label>
+          <button type="button" id="retry-ocr-btn" class="btn btn-primary btn-block" data-i18n="retryWithOcrBtn"></button>
+        </div>
         <button type="button" id="try-again" class="btn btn-ghost" data-i18n="tryAgain"></button>
       </div>
     </section>
