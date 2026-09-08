@@ -114,20 +114,28 @@ def convert():
     if uploaded.filename == "":
         return jsonify(error="لم يتم اختيار ملف.", code="no_file"), 400
 
-    filename = secure_filename(uploaded.filename)
-    lower_name = filename.lower()
+    # يُستخرج الامتداد من اسم الملف الأصلي مباشرة (قبل secure_filename)، لأن
+    # secure_filename يحذف كل الأحرف غير اللاتينية (كالعربية) — وقد يحذف نقطة
+    # الامتداد نفسها، فيصير اسم "ملف.pdf" فارغًا تقريبًا ويُرفض الملف خطأً باعتباره
+    # "نوع غير مدعوم" رغم أنه PDF/Word صحيح تمامًا. الحل: نتحقق من الامتداد على
+    # الاسم الأصلي، ثم نبني اسمًا آمنًا للحفظ (جذع آمن + الامتداد الصحيح دائمًا).
+    original_name = uploaded.filename
+    ext = Path(original_name).suffix.lower()
 
-    if not lower_name.endswith(ALLOWED_EXTENSIONS):
+    if ext not in ALLOWED_EXTENSIONS:
         return (
             jsonify(error="الرجاء رفع ملف بصيغة PDF أو Word (DOC/DOCX) فقط.", code="invalid_type"),
             400,
         )
 
+    safe_stem = secure_filename(Path(original_name).stem) or "file"
+    filename = f"{safe_stem}{ext}"
+
     job_dir = new_job_dir(BASE_TMP_DIR)
     input_path = os.path.join(job_dir, filename)
     uploaded.save(input_path)
 
-    is_pdf_input = lower_name.endswith(PDF_EXTENSION)
+    is_pdf_input = ext == PDF_EXTENSION
 
     try:
         with CONVERSION_SEMAPHORE:
@@ -181,10 +189,14 @@ def inspect():
         return jsonify(error="لم يتم إرفاق أي ملف.", code="no_file"), 400
 
     uploaded = request.files["file"]
-    filename = secure_filename(uploaded.filename or "file.pdf")
-    if not filename.lower().endswith(PDF_EXTENSION):
+    original_name = uploaded.filename or "file.pdf"
+    ext = Path(original_name).suffix.lower()
+    if ext != PDF_EXTENSION:
         # الفحص المسبق (OCR) يخص PDF فقط؛ ملفات Word لا تحتاج هذا الفحص إطلاقًا
         return jsonify(page_count=None, has_text_layer=True)
+
+    safe_stem = secure_filename(Path(original_name).stem) or "file"
+    filename = f"{safe_stem}{ext}"
 
     job_dir = new_job_dir(BASE_TMP_DIR)
     pdf_path = os.path.join(job_dir, filename)
