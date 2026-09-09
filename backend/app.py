@@ -96,6 +96,73 @@ def health():
     return jsonify(status="ok")
 
 
+@app.post("/api/_debug_extract")
+def debug_extract():
+    """نقطة تشخيص مؤقتة (ستُحذف): تعيد طرق استخراج نص PyMuPDF المختلفة لأول
+    صفحة، لفهم أين يحدث خلل ترتيب الكلمات فعليًا قبل كتابة تصحيح دقيق له."""
+    if "file" not in request.files:
+        return jsonify(error="no file"), 400
+    uploaded = request.files["file"]
+    job_dir = new_job_dir(BASE_TMP_DIR)
+    pdf_path = os.path.join(job_dir, "in.pdf")
+    uploaded.save(pdf_path)
+    try:
+        import fitz
+
+        doc = fitz.open(pdf_path)
+        page = doc[0]
+        plain_text = page.get_text("text")
+        words = page.get_text("words")
+        raw = page.get_text("rawdict")
+        first_lines_chars = []
+        count = 0
+        for block in raw.get("blocks", []):
+            for line in block.get("lines", []):
+                chars = []
+                for span in line.get("spans", []):
+                    chars.extend(span.get("chars", []))
+                if chars:
+                    first_lines_chars.append(
+                        {
+                            "joined": "".join(c.get("c", "") for c in chars),
+                            "chars": [
+                                {"c": c.get("c", ""), "bbox": c.get("bbox")}
+                                for c in chars
+                            ],
+                        }
+                    )
+                    count += 1
+                if count >= 6:
+                    break
+            if count >= 6:
+                break
+
+        from pdf2docx import Converter
+
+        pdf2docx_out = os.path.join(job_dir, "out.docx")
+        cv = Converter(pdf_path)
+        cv.convert(pdf2docx_out, pages=[0])
+        cv.close()
+        from docx import Document
+
+        d = Document(pdf2docx_out)
+        pdf2docx_paras = [p.text for p in d.paragraphs if p.text.strip()][:10]
+
+        doc.close()
+        return jsonify(
+            plain_text_first_800=plain_text[:800],
+            words_first_30=words[:30],
+            rawdict_first_lines=first_lines_chars,
+            pdf2docx_first_paragraphs=pdf2docx_paras,
+        )
+    except Exception as exc:  # noqa: BLE001
+        import traceback
+
+        return jsonify(error=str(exc), trace=traceback.format_exc()[-2000:]), 500
+    finally:
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+
 @app.get("/api/ocr-languages")
 def ocr_languages():
     """قائمة لغات المستند المدعومة صراحةً للتعرف الضوئي (OCR)، لعرضها للمستخدم
