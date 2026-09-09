@@ -367,6 +367,7 @@ def convert_with_pdf2docx(pdf_path: str, out_dir: str) -> str:
     # الإضافية لا يُفشل التحويل؛ يبقى ناتج pdf2docx الأصلي كما هو.
     try:
         corrections = _find_arabic_ligature_corrections(pdf_path)
+        corrections.update(_find_arabic_word_order_corrections(pdf_path))
         if corrections:
             _apply_text_corrections_to_docx(out_path, corrections)
     except Exception:  # noqa: BLE001
@@ -464,6 +465,83 @@ def _find_arabic_ligature_corrections(pdf_path: str) -> dict:
                             fixed, changed = _fix_word_ligature_order(word_chars)
                             if changed and original and fixed and original != fixed:
                                 corrections[original] = fixed
+    finally:
+        doc.close()
+    return corrections
+
+
+# نطاقات يونيكود الأساسية للأحرف العربية، لتحديد هل سطر معيّن عربي بشكل غالب.
+_ARABIC_RANGES = ((0x0600, 0x06FF), (0x0750, 0x077F), (0xFB50, 0xFDFF), (0xFE70, 0xFEFF))
+
+
+def _is_arabic_letter(ch: str) -> bool:
+    if not ch:
+        return False
+    code = ord(ch)
+    return any(lo <= code <= hi for lo, hi in _ARABIC_RANGES)
+
+
+def _word_left_x(word_chars: list) -> float:
+    boxes = [ch.get("bbox") for ch in word_chars if ch.get("bbox")]
+    return min(b[0] for b in boxes) if boxes else 0.0
+
+
+def _find_arabic_word_order_corrections(pdf_path: str) -> dict:
+    """
+    يفحص ملف PDF على مستوى السطر الواحد (تجميع كل spans المنتمية لنفس
+    الـ line في PyMuPDF rawdict)، ويكتشف الأسطر العربية التي استُخرجت بترتيب
+    كلمات معكوس جزئيًا عن ترتيب القراءة الصحيح (من اليمين لليسار) — وهو خلل
+    معروف في استخراج نص RTL من بعض ملفات PDF عبر PyMuPDF (الذي تعتمد عليه
+    pdf2docx)، ويؤدي أحيانًا أيضًا لالتصاق كلمتين متجاورتين بلا مسافة بينهما.
+
+    الاعتماد الحصري هو على المواضع الهندسية الفعلية (bbox) لكل كلمة داخل
+    السطر لتحديد ترتيب القراءة الصحيح (الكلمة اليمنى أولاً)، فمقارنته بالترتيب
+    الذي استخرجته المكتبة فعليًا. يُبنى قاموس تصحيحات {نص السطر كما استُخرج
+    حرفيًا: نص السطر بالترتيب الصحيح}، ولا يُضاف أي سطر لم يتغيّر ترتيبه فعليًا
+    (أي أن هذا التصحيح لا يمسّ أي سطر مستخرج بشكل صحيح من الأصل).
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        return {}
+
+    corrections: dict = {}
+    doc = fitz.open(pdf_path)
+    try:
+        for page in doc:
+            raw = page.get_text("rawdict")
+            for block in raw.get("blocks", []):
+                for line in block.get("lines", []):
+                    chars = []
+                    for span in line.get("spans", []):
+                        chars.extend(span.get("chars", []))
+                    if len(chars) < 6:
+                        continue
+
+                    letters = [ch.get("c", "") for ch in chars if ch.get("c", "").isalpha()]
+                    if len(letters) < 6:
+                        continue
+                    arabic_count = sum(1 for c in letters if _is_arabic_letter(c))
+                    if arabic_count < len(letters) * 0.5:
+                        continue  # سطر ليس عربيًا بشكل غالب؛ لا نلمسه
+
+                    words = _split_chars_into_words(chars)
+                    if len(words) < 2:
+                        continue
+
+                    order = sorted(range(len(words)), key=lambda i: -_word_left_x(words[i]))
+                    if order == list(range(len(words))):
+                        continue  # الترتيب المستخرج صحيح فعليًا؛ لا حاجة لتصحيح
+
+                    original_text = "".join(ch.get("c", "") for ch in chars)
+                    fixed_words = []
+                    for i in order:
+                        w_text, _ = _fix_word_ligature_order(words[i])
+                        fixed_words.append(w_text)
+                    corrected_text = " ".join(fixed_words)
+
+                    if original_text and corrected_text and original_text != corrected_text:
+                        corrections[original_text] = corrected_text
     finally:
         doc.close()
     return corrections
