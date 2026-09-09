@@ -540,48 +540,6 @@ def _extract_pdf_text_length(pdf_path: str, max_pages: int = 200) -> int:
     return total
 
 
-# نطاقات يونيكود الأساسية للأحرف العربية (وما يشابهها من أبجديات RTL: الفارسية
-# والأردية تتقاسم نفس نطاق الحروف العربية الأساسي، لذلك هذا الفحص يخدمها أيضًا).
-_RTL_RANGES = (
-    (0x0600, 0x06FF),  # العربية
-    (0x0750, 0x077F),  # ملحق العربية
-    (0x08A0, 0x08FF),  # ملحق العربية الموسّع
-    (0xFB50, 0xFDFF),  # أشكال العرض العربية أ
-    (0xFE70, 0xFEFF),  # أشكال العرض العربية ب
-)
-
-
-def _is_rtl_char(ch: str) -> bool:
-    code = ord(ch)
-    return any(lo <= code <= hi for lo, hi in _RTL_RANGES)
-
-
-def _is_rtl_heavy_pdf(pdf_path: str, max_pages: int = 5, threshold: float = 0.15) -> bool:
-    """
-    يفحص عيّنة من نص الملف (أول عدّة صفحات) ليقرّر إن كانت غالبية أحرفه
-    الأبجدية من نوع عربي/RTL. نستخدم هذا لتفضيل محرك LibreOffice (الذي يعتمد
-    داخليًا على poppler لقراءة طبقة نص PDF) على محرك pdf2docx/PyMuPDF، لأن
-    الأخير معروف بخلل في ترتيب الكلمات والأرقام داخل السطر الواحد عند التعامل
-    مع نصوص عربية RTL في بعض ملفات PDF (يُخرج النص بترتيب بصري/معكوس جزئيًا
-    بدل الترتيب المنطقي الصحيح للقراءة)، بعكس poppler الذي يتعامل مع هذه
-    الحالة بشكل صحيح وموثوق لهذا النوع من الملفات.
-    """
-    try:
-        with pdfplumber.open(pdf_path) as pdf:
-            sample = ""
-            for page in pdf.pages[:max_pages]:
-                sample += page.extract_text() or ""
-    except Exception:  # noqa: BLE001
-        return False
-
-    letters = [ch for ch in sample if ch.isalpha()]
-    if len(letters) < 20:
-        return False
-
-    rtl_count = sum(1 for ch in letters if _is_rtl_char(ch))
-    return (rtl_count / len(letters)) >= threshold
-
-
 def convert_pdf_to_docx(
     pdf_path: str, out_dir: str, use_ocr: bool = False, ocr_lang: str = DEFAULT_OCR_LANG
 ) -> str:
@@ -605,34 +563,6 @@ def convert_pdf_to_docx(
         )
 
     source_text_len = _extract_pdf_text_length(pdf_path)
-
-    # للملفات العربية/RTL: PyMuPDF (الذي تعتمد عليه pdf2docx) قد يُخرج بعض
-    # الأسطر بترتيب كلمات/أرقام معكوس جزئيًا (خلل معروف في قراءة نصوص RTL من
-    # بعض ملفات PDF)، بعكس LibreOffice الذي يعتمد داخليًا على poppler ويقرأ
-    # هذا النوع من الملفات بترتيب صحيح وموثوق. لذلك نبدأ بـ LibreOffice
-    # مباشرة لهذه الملفات، ونستخدم pdf2docx فقط كخطة بديلة إن فشل LibreOffice.
-    if _is_rtl_heavy_pdf(pdf_path):
-        try:
-            lo_path = _run_with_timeout(
-                lambda: convert_with_libreoffice(pdf_path, out_dir, timeout=LIBREOFFICE_TIMEOUT),
-                LIBREOFFICE_TIMEOUT,
-            )
-            produced_len = _docx_text_length(lo_path)
-            if source_text_len == 0 or produced_len >= source_text_len * 0.4:
-                return lo_path
-        except ConversionTimeoutError:
-            pass
-        except Exception:  # noqa: BLE001
-            pass
-        # لم ينجح LibreOffice (أو أنتج نصًا ناقصًا) — نجرّب pdf2docx كخطة بديلة
-        try:
-            return _run_with_timeout(
-                lambda: convert_with_pdf2docx(pdf_path, out_dir), PDF2DOCX_TIMEOUT
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise ConversionError(
-                "تعذّر تحويل هذا الملف عبر كل محركات التحويل المتاحة."
-            ) from exc
 
     pdf2docx_path = None
     produced_len = 0
