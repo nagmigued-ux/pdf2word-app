@@ -525,7 +525,14 @@ def _find_arabic_word_order_corrections(pdf_path: str) -> dict:
                     if arabic_count < len(letters) * 0.5:
                         continue  # سطر ليس عربيًا بشكل غالب؛ لا نلمسه
 
-                    words = _split_chars_into_words(chars)
+                    # نستثني "كلمات" لا تحتوي إلا على مسافات (فجوات تباعد/محاذاة
+                    # لا تمثل محتوى فعليًا)، لأنها كانت تُسبب اختلافات صورية في
+                    # الترتيب لا علاقة لها بخلل RTL الحقيقي
+                    all_words = _split_chars_into_words(chars)
+                    words = [
+                        w for w in all_words
+                        if "".join(ch.get("c", "") for ch in w).strip()
+                    ]
                     if len(words) < 2:
                         continue
 
@@ -533,12 +540,14 @@ def _find_arabic_word_order_corrections(pdf_path: str) -> dict:
                     if order == list(range(len(words))):
                         continue  # الترتيب المستخرج صحيح فعليًا؛ لا حاجة لتصحيح
 
-                    original_text = "".join(ch.get("c", "") for ch in chars)
+                    original_text = "".join(ch.get("c", "") for ch in chars).strip()
+                    if len(original_text) < 8:
+                        continue
                     fixed_words = []
                     for i in order:
                         w_text, _ = _fix_word_ligature_order(words[i])
-                        fixed_words.append(w_text)
-                    corrected_text = " ".join(fixed_words)
+                        fixed_words.append(w_text.strip())
+                    corrected_text = " ".join(w for w in fixed_words if w)
 
                     if original_text and corrected_text and original_text != corrected_text:
                         corrections[original_text] = corrected_text
