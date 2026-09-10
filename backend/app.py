@@ -149,11 +149,33 @@ def debug_extract():
         pdf2docx_paras = [p.text for p in d.paragraphs if p.text.strip()][:10]
 
         doc.close()
+
+        from converter import (
+            _find_arabic_word_order_corrections,
+            _find_arabic_ligature_corrections,
+        )
+
+        word_corr = _find_arabic_word_order_corrections(pdf_path)
+        lig_corr = _find_arabic_ligature_corrections(pdf_path)
+        all_text = "\n".join(pdf2docx_paras)
+        match_report = []
+        for key, val in list(word_corr.items())[:15]:
+            match_report.append(
+                {
+                    "key": key,
+                    "value": val,
+                    "found_in_pdf2docx_output": key in all_text,
+                }
+            )
+
         return jsonify(
             plain_text_first_800=plain_text[:800],
             words_first_30=words[:30],
             rawdict_first_lines=first_lines_chars,
             pdf2docx_first_paragraphs=pdf2docx_paras,
+            word_order_corrections_count=len(word_corr),
+            ligature_corrections_count=len(lig_corr),
+            word_order_match_report=match_report,
         )
     except Exception as exc:  # noqa: BLE001
         import traceback
