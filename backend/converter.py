@@ -579,6 +579,27 @@ def _apply_text_corrections_to_docx(docx_path: str, corrections: dict) -> None:
             if new_text != run.text:
                 run.text = new_text
 
+        # بعض التصحيحات (خصوصًا عكس ترتيب كلمات سطر كامل) قد يمتد نصها على
+        # أكثر من "run" واحد داخل نفس الفقرة (لو غيّر pdf2docx التنسيق في
+        # منتصف السطر)، فلا يجدها التصحيح أعلاه لأنه يفحص كل run على حدة.
+        # هنا نتحقق من النص الكامل المدمج للفقرة؛ فإن وجدنا تصحيحًا منطبقًا
+        # عليه ولم يُطبَّق بعد، نطبّقه على النص الكامل ونضعه في أول run غير
+        # فارغ (مع تفريغ باقي الـ runs)، على حساب فقدان أي تمايز تنسيقي بسيط
+        # داخل تلك الفقرة فقط (كحجم خط مختلف لجزء من السطر)، تفاديًا لبقاء
+        # النص معكوسًا بالكامل.
+        runs_with_text = [r for r in paragraph.runs if r.text]
+        if not runs_with_text:
+            return
+        merged = "".join(r.text for r in runs_with_text)
+        new_merged = merged
+        for wrong, right in ordered:
+            if wrong in new_merged:
+                new_merged = new_merged.replace(wrong, right)
+        if new_merged != merged:
+            runs_with_text[0].text = new_merged
+            for r in runs_with_text[1:]:
+                r.text = ""
+
     doc = Document(docx_path)
     for paragraph in doc.paragraphs:
         _fix_paragraph(paragraph)
