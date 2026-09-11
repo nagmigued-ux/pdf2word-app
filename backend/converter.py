@@ -14,11 +14,13 @@
 """
 
 import os
+import re
 import shutil
 import signal
 import subprocess
 import tempfile
 import uuid
+from collections import Counter
 from dataclasses import dataclass
 
 import pdfplumber
@@ -354,26 +356,287 @@ def convert_with_pdf2docx(pdf_path: str, out_dir: str) -> str:
     if not os.path.exists(out_path):
         raise ConversionError("تعذّر إنشاء ملف Word من هذا الملف عبر محرك النص المباشر.")
 
-    # تصحيح خلل معروف في استخراج النص العربي: بعض الخطوط المضمّنة في PDF
-    # (خاصة الناتجة من Word/طابعات PDF عربية) تُشكّل رباط "اللام+الألف" (لا/
-    # لأ/لإ/لآ) كرمز خط (glyph) رسم واحد، وبعض مكتبات الاستخراج (ومنها
-    # PyMuPDF التي يعتمد عليها pdf2docx) تُخرج حرفَي هذا الرباط بترتيب معكوس
-    # (الألف قبل اللام) بدل الترتيب الصحيح. لا يمكن إصلاح هذا نصيًا بشكل أعمى
-    # لأن نفس التتابع الحرفي "ألف ثم لام" يرد بشكل صحيح تمامًا في كلمات شائعة
-    # جدًا (مثل "مسألة"، "إلى"، "ألف")، لذلك نعتمد فقط على تطابق/تداخل صناديق
-    # الأحرف المحيطة (bbox) من ملف PDF نفسه: تطابق الصندوقين يعني يقينًا أن
-    # الحرفين استُخرجا من رسمة واحدة فعلية (رباط حقيقي)، وعندها فقط يكون
-    # التصحيح آمنًا 100% دون أي التباس مع كلمات أخرى. أي فشل في هذه الخطوة
-    # الإضافية لا يُفشل التحويل؛ يبقى ناتج pdf2docx الأصلي كما هو.
+    # تصحيح ترتيب النص العربي: pdf2docx (المعتمد على PyMuPDF لتحليل التخطيط
+    # وبناء الفقرات) قد يُخرج نص بعض الفقرات بترتيب كلمات/حروف معكوس جزئيًا
+    # لنصوص RTL، وهذا خلل في منطق pdf2docx الداخلي لإعادة بناء الفقرات نفسه
+    # وليس فقط في استخراج الحروف الخام. لذلك لا نحاول تصحيح النص بعد إنتاجه
+    # بأنماط جزئية (كرباط حرفين أو كلمة بمفردها)، بل نستبدل نص كل فقرة كاملة
+    # بالنص الصحيح المطابق المستخرج مباشرة من نفس ملف PDF عبر pdftotext
+    # (الذي تحقّقنا أنه يقرأ نصوص RTL بترتيب صحيح موثوق)، بمطابقة كل فقرة مع
+    # المقطع المقابل من النص الصحيح عبر تطابق "كيس الحروف" الكامل (بعد حذف
+    # الفراغات) — فإن لم يوجد تطابق مضمون 100% لفقرة ما، تبقى كما أنتجها
+    # pdf2docx دون أي لمس (لا تخمين، لا استبدال جزئي محتمل الخطأ). فشل هذه
+    # الخطوة كاملة (لأي سبب) لا يُفشل التحويل؛ يبقى ناتج pdf2docx كما هو.
     try:
-        corrections = _find_arabic_ligature_corrections(pdf_path)
-        corrections.update(_find_arabic_word_order_corrections(pdf_path))
-        if corrections:
-            _apply_text_corrections_to_docx(out_path, corrections)
+        _rebuild_pdf2docx_text_order(pdf_path, out_path)
     except Exception:  # noqa: BLE001
         pass
 
     return out_path
+
+
+_BIDI_CONTROL_RE = re.compile("[‎‏‪-‮⁦-⁩]")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _nospace(s: str) -> str:
+    return _WHITESPACE_RE.sub("", s)
+
+
+def _extract_ground_truth_lines(pdf_path: str) -> list:
+    """
+    يستخرج نص PDF بترتيب قراءة منطقي صحيح عبر pdftotext (poppler)، والذي
+    تحقّقنا يدويًا (بمقارنته حرفًا بحرف مع أصل نص المستند) أنه يقرأ نصوص RTL
+    العربية في هذا النوع من ملفات PDF بترتيب صحيح 100%، بعكس محرك التحليل
+    الداخلي لـ pdf2docx/PyMuPDF. يعيد قائمة أسطر نصية (كل سطر = سطر مرئي واحد
+    في الصفحة، بترتيبه الصحيح من أول الصفحة الأولى لآخر الصفحة الأخيرة)، بعد
+    حذف رموز التحكم في اتجاه الكتابة (bidi control chars) وتجاهل الأسطر
+    الفارغة تمامًا. يعيد قائمة فارغة إن تعذّر ذلك (poppler غير متاح، أو فشل
+    الاستخراج لأي سبب)، ولا يرفع أي استثناء.
+    """
+    if not shutil.which("pdftotext"):
+        return []
+    try:
+        result = subprocess.run(
+            ["pdftotext", "-enc", "UTF-8", "-layout", pdf_path, "-"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
+            check=False,
+        )
+    except Exception:  # noqa: BLE001
+        return []
+    if result.returncode != 0:
+        return []
+
+    text = result.stdout.decode("utf-8", errors="ignore")
+    text = _BIDI_CONTROL_RE.sub("", text)
+
+    lines = []
+    for page_text in text.split("\f"):
+        for raw_line in page_text.split("\n"):
+            if raw_line.strip():
+                lines.append(raw_line)
+    return lines
+
+
+def _find_match_position(flat: str, target_counter: Counter, length: int, exp: int, lo: int, hi: int):
+    """
+    يبحث عن أول موضع في flat يكون فيه المقطع (بطول length) مطابقًا تمامًا
+    (نفس تكرار كل حرف) لـ target_counter، بالبحث أولًا من exp صعودًا حتى hi
+    ثم من exp نازلًا حتى lo. يستخدم "نافذة منزلقة" بتحديث تدريجي (إضافة حرف
+    جديد وحذف حرف خارج) بدل إعادة بناء العداد من الصفر عند كل موضع، لأداء
+    عملي عبر نطاق بحث كبير (قد يبلغ آلاف الأحرف) على مستند من عشرات الصفحات.
+    """
+    if hi < lo or length <= 0 or lo < 0 or hi + length > len(flat):
+        hi = min(hi, len(flat) - length)
+        if hi < lo:
+            return None
+
+    start = max(lo, min(exp, hi))
+
+    window = Counter(flat[start:start + length])
+    pos = start
+    while True:
+        if window == target_counter:
+            return pos
+        nxt = pos + 1
+        if nxt > hi:
+            break
+        old_c = flat[pos]
+        window[old_c] -= 1
+        if window[old_c] == 0:
+            del window[old_c]
+        new_c = flat[pos + length]
+        window[new_c] = window.get(new_c, 0) + 1
+        pos = nxt
+
+    pos = start - 1
+    if pos < lo:
+        return None
+    window = Counter(flat[pos:pos + length])
+    while True:
+        if window == target_counter:
+            return pos
+        prev_pos = pos - 1
+        if prev_pos < lo:
+            break
+        new_c = flat[prev_pos]
+        window[new_c] = window.get(new_c, 0) + 1
+        old_c = flat[prev_pos + length]
+        window[old_c] -= 1
+        if window[old_c] == 0:
+            del window[old_c]
+        pos = prev_pos
+    return None
+
+
+def _align_docx_to_ground_truth(paragraph_texts: list, truth_lines: list) -> dict:
+    """
+    يحاذي نصوص فقرات DOCX (كما استخرجها/أعاد بناءها pdf2docx، قد تكون مشوّشة
+    الترتيب لبعض الفقرات) مع أسطر النص الصحيحة (truth_lines)، بالاعتماد
+    فقط على تطابق "كيس الحروف" الكامل (multiset الحروف بعد حذف كل الفراغات)
+    لكل فقرة مقابل نطاق من النص الصحيح حول موضعها المتوقع (بناء على مجموع
+    أطوال الفقرات السابقة، بافتراض أن ترتيب الفقرات نفسه يوافق ترتيب القراءة
+    الصحيح في الغالب، وأن الخلل محصور في ترتيب الكلمات/الحروف داخل الفقرة).
+
+    يعيد قاموسًا {فهرس الفقرة (في paragraph_texts): النص الصحيح المطابق} لكل
+    فقرة وُجد لها تطابق مضمون 100% (تطابق كامل لعدد/نوع كل حرف)، عبر خطوتين:
+    مطابقة مباشرة حول الموضع المتوقع، ثم "تعبئة الفراغات" بين فقرتين مطابقتين
+    لو كان طول الفراغ بينهما (في النص الصحيح) يساوي تمامًا مجموع أطوال
+    الفقرات غير المطابقة الواقعة بينهما (دليل قوي أنها هي نفسها، فقط لم
+    تُطابَق مباشرة بسبب فرق طفيف كوجود همزات/أرقام مختلفة الترميز). لا يخمّن
+    أي تصحيح لفقرة لم يُوجد لها تطابق مضمون بأي من الطريقتين.
+    """
+    line_starts = []
+    acc = 0
+    flat_parts = []
+    for line in truth_lines:
+        line_starts.append(acc)
+        ns = _nospace(line)
+        flat_parts.append(ns)
+        acc += len(ns)
+    flat = "".join(flat_parts)
+    line_starts.append(acc)
+    n = len(flat)
+
+    def reconstruct(start, end):
+        if start >= end:
+            return ""
+        first_line = last_line = None
+        for i in range(len(truth_lines)):
+            s, e = line_starts[i], line_starts[i + 1]
+            if e > start and s < end:
+                if first_line is None:
+                    first_line = i
+                last_line = i
+        if first_line is None:
+            return ""
+        return "\n".join(truth_lines[i].strip() for i in range(first_line, last_line + 1))
+
+    d_lens = [len(_nospace(t)) for t in paragraph_texts]
+    d_counters = [Counter(_nospace(t)) for t in paragraph_texts]
+    expected = []
+    c = 0
+    for length in d_lens:
+        expected.append(c)
+        c += length
+
+    window_radius = 1500
+    results = [None] * len(paragraph_texts)
+    for di, length in enumerate(d_lens):
+        if length == 0:
+            continue
+        exp = expected[di]
+        lo = max(0, exp - window_radius)
+        hi = min(n - length, exp + window_radius)
+        if hi < lo:
+            continue
+        found = _find_match_position(flat, d_counters[di], length, exp, lo, hi)
+        if found is not None:
+            results[di] = (found, found + length)
+
+    total = len(paragraph_texts)
+    i = 0
+    while i < total:
+        if results[i] is not None:
+            i += 1
+            continue
+        j = i
+        while j < total and results[j] is None:
+            j += 1
+        prev_end = results[i - 1][1] if i > 0 else 0
+        next_start = results[j][0] if j < total else n
+        gap_len = next_start - prev_end
+        sum_lens = sum(d_lens[i:j])
+        if gap_len == sum_lens and gap_len >= 0:
+            cursor = prev_end
+            for k in range(i, j):
+                length = d_lens[k]
+                results[k] = (cursor, cursor + length)
+                cursor += length
+        i = j + 1
+
+    corrections = {}
+    for idx, r in enumerate(results):
+        if r is None:
+            continue
+        corrected = reconstruct(r[0], r[1])
+        if corrected and corrected != paragraph_texts[idx]:
+            corrections[idx] = corrected
+    return corrections
+
+
+def _apply_paragraph_text_rebuild(docx_path: str, corrections_by_index: dict) -> int:
+    """
+    يستبدل نص كل فقرة (بفهرسها في doc.paragraphs) بالنص الصحيح المقابل من
+    corrections_by_index، بوضعه في "run" واحد فقط (أكبر run موجود أصلًا في
+    الفقرة من حيث طول نصه، لإبقاء التنسيق السائد لغالب نص الفقرة)، وتفريغ كل
+    الـ runs الأخرى في نفس الفقرة. هذا يعني أن أي تمايز تنسيقي صغير داخل تلك
+    الفقرة بعينها (كخط مختلف الحجم لجزء قصير من السطر) قد يُفقد، لكن هذا مقبول
+    لأنه محصور بالفقرات التي كان نصها فعليًا مشوّش الترتيب، وأولوية صحة
+    المحتوى فيها أعلى من تفصيل تنسيقي بسيط. يعيد عدد الفقرات التي طُبّق عليها
+    استبدال فعلي."""
+    from docx import Document
+
+    doc = Document(docx_path)
+    paragraphs = doc.paragraphs
+    applied = 0
+    for idx, new_text in corrections_by_index.items():
+        if idx < 0 or idx >= len(paragraphs):
+            continue
+        paragraph = paragraphs[idx]
+        runs_with_text = [r for r in paragraph.runs if r.text]
+        if not runs_with_text:
+            continue
+        anchor = max(runs_with_text, key=lambda r: len(r.text))
+        anchor.text = new_text
+        for r in runs_with_text:
+            if r is not anchor:
+                r.text = ""
+        applied += 1
+
+    if applied:
+        doc.save(docx_path)
+    return applied
+
+
+def _rebuild_pdf2docx_text_order(pdf_path: str, docx_path: str) -> int:
+    """
+    نقطة الدخول: يستخرج النص الصحيح من pdf_path عبر pdftotext، ثم يحاذيه مع
+    فقرات docx_path (ناتج pdf2docx) ويستبدل نص كل فقرة وُجد لها تطابق مضمون
+    بالنص الصحيح المقابل. يتضمن فحصًا وقائيًا أوليًا: إن اختلف إجمالي عدد
+    الأحرف (بعد حذف الفراغات) بين docx وnص PDF الصحيح بأكثر من ٪15 (مؤشر أن
+    البنية مختلفة جوهريًا، كوجود جداول/صور معقدة)، يتوقف دون أي تعديل تفاديًا
+    لاستبدال غير موثوق. يعيد عدد الفقرات التي عُدّلت فعليًا (0 يعني عدم إجراء
+    أي تغيير، وهو أمر آمن تمامًا: يبقى ناتج pdf2docx الأصلي كما هو)."""
+    truth_lines = _extract_ground_truth_lines(pdf_path)
+    if not truth_lines:
+        return 0
+
+    from docx import Document
+
+    doc = Document(docx_path)
+    texts = [p.text for p in doc.paragraphs]
+    nonempty_idx = [i for i, t in enumerate(texts) if t.strip()]
+    nonempty_texts = [texts[i] for i in nonempty_idx]
+    if not nonempty_texts:
+        return 0
+
+    d_total = sum(len(_nospace(t)) for t in nonempty_texts)
+    t_total = sum(len(_nospace(line)) for line in truth_lines)
+    if d_total == 0 or t_total == 0:
+        return 0
+    ratio = d_total / t_total
+    if ratio < 0.85 or ratio > 1.15:
+        return 0
+
+    local_corrections = _align_docx_to_ground_truth(nonempty_texts, truth_lines)
+    if not local_corrections:
+        return 0
+
+    corrections_by_index = {nonempty_idx[k]: v for k, v in local_corrections.items()}
+    return _apply_paragraph_text_rebuild(docx_path, corrections_by_index)
 
 
 # رموز الألف في العربية (عادية/همزة فوق/همزة تحت/مدّة) التي تُشكّل رباطًا

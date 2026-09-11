@@ -98,8 +98,9 @@ def health():
 
 @app.post("/api/_debug_extract")
 def debug_extract():
-    """نقطة تشخيص مؤقتة (ستُحذف): تعيد طرق استخراج نص PyMuPDF المختلفة لأول
-    صفحة، لفهم أين يحدث خلل ترتيب الكلمات فعليًا قبل كتابة تصحيح دقيق له."""
+    """نقطة تشخيص مؤقتة (ستُحذف): تختبر خطوة إعادة بناء ترتيب النص
+    (_rebuild_pdf2docx_text_order) على ملف PDF كامل قبل تفعيلها ضمن مسار
+    التحويل الحقيقي، وتقارن نص كل فقرة قبل/بعد لعيّنة من الفقرات."""
     if "file" not in request.files:
         return jsonify(error="no file"), 400
     uploaded = request.files["file"]
@@ -107,75 +108,51 @@ def debug_extract():
     pdf_path = os.path.join(job_dir, "in.pdf")
     uploaded.save(pdf_path)
     try:
-        import fitz
-
-        doc = fitz.open(pdf_path)
-        page = doc[0]
-        plain_text = page.get_text("text")
-        words = page.get_text("words")
-        raw = page.get_text("rawdict")
-        first_lines_chars = []
-        count = 0
-        for block in raw.get("blocks", []):
-            for line in block.get("lines", []):
-                chars = []
-                for span in line.get("spans", []):
-                    chars.extend(span.get("chars", []))
-                if chars:
-                    first_lines_chars.append(
-                        {
-                            "joined": "".join(c.get("c", "") for c in chars),
-                            "chars": [
-                                {"c": c.get("c", ""), "bbox": c.get("bbox")}
-                                for c in chars
-                            ],
-                        }
-                    )
-                    count += 1
-                if count >= 6:
-                    break
-            if count >= 6:
-                break
-
         from pdf2docx import Converter
+        from docx import Document
+        from converter import (
+            _extract_ground_truth_lines,
+            _rebuild_pdf2docx_text_order,
+            _nospace,
+        )
 
         pdf2docx_out = os.path.join(job_dir, "out.docx")
         cv = Converter(pdf_path)
-        cv.convert(pdf2docx_out, pages=[0])
+        cv.convert(pdf2docx_out)
         cv.close()
-        from docx import Document
 
-        d = Document(pdf2docx_out)
-        pdf2docx_paras = [p.text for p in d.paragraphs if p.text.strip()][:10]
+        before_doc = Document(pdf2docx_out)
+        before_texts = [p.text for p in before_doc.paragraphs]
 
-        doc.close()
+        truth_lines = _extract_ground_truth_lines(pdf_path)
+        d_total = sum(len(_nospace(t)) for t in before_texts if t.strip())
+        t_total = sum(len(_nospace(line)) for line in truth_lines)
 
-        from converter import (
-            _find_arabic_word_order_corrections,
-            _find_arabic_ligature_corrections,
-        )
+        applied = _rebuild_pdf2docx_text_order(pdf_path, pdf2docx_out)
 
-        word_corr = _find_arabic_word_order_corrections(pdf_path)
-        lig_corr = _find_arabic_ligature_corrections(pdf_path)
-        all_text = "\n".join(pdf2docx_paras)
-        match_report = []
-        for key, val in list(word_corr.items())[:15]:
-            match_report.append(
-                {
-                    "key": key,
-                    "value": val,
-                    "found_in_pdf2docx_output": key in all_text,
-                }
-            )
+        after_doc = Document(pdf2docx_out)
+        after_texts = [p.text for p in after_doc.paragraphs]
+
+        changed_samples = []
+        for i, (b, a) in enumerate(zip(before_texts, after_texts)):
+            if b != a:
+                changed_samples.append({"idx": i, "before": b, "after": a})
+
+        unchanged_nonempty_samples = []
+        for i, (b, a) in enumerate(zip(before_texts, after_texts)):
+            if b == a and b.strip() and len(unchanged_nonempty_samples) < 10:
+                unchanged_nonempty_samples.append({"idx": i, "text": b})
 
         return jsonify(
-            plain_text_first_800=plain_text[:800],
-            words_first_30=words[:30],
-            rawdict_first_lines=first_lines_chars,
-            pdf2docx_first_paragraphs=pdf2docx_paras,
-            word_order_corrections_count=len(word_corr),
-            ligature_corrections_count=len(lig_corr),
-            word_order_match_report=match_report,
+            truth_lines_count=len(truth_lines),
+            truth_total_nospace_chars=t_total,
+            docx_total_nospace_chars=d_total,
+            length_ratio=(d_total / t_total) if t_total else None,
+            paragraphs_count=len(before_texts),
+            paragraphs_applied=applied,
+            changed_count=len(changed_samples),
+            changed_samples_first_20=changed_samples[:20],
+            unchanged_nonempty_samples_first_10=unchanged_nonempty_samples,
         )
     except Exception as exc:  # noqa: BLE001
         import traceback
