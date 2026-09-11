@@ -488,31 +488,24 @@ def _align_docx_to_ground_truth(paragraph_texts: list, truth_lines: list) -> dic
     تُطابَق مباشرة بسبب فرق طفيف كوجود همزات/أرقام مختلفة الترميز). لا يخمّن
     أي تصحيح لفقرة لم يُوجد لها تطابق مضمون بأي من الطريقتين.
     """
-    line_starts = []
-    acc = 0
-    flat_parts = []
-    for line in truth_lines:
-        line_starts.append(acc)
-        ns = _nospace(line)
-        flat_parts.append(ns)
-        acc += len(ns)
-    flat = "".join(flat_parts)
-    line_starts.append(acc)
+    # نص واحد كبير يجمع كل الأسطر (مفصولة بسطر جديد، كما في الأصل)، مع فهرس
+    # يربط كل موضع في "flat" (النص بلا فراغات) بموضعه الحقيقي في هذا النص
+    # الكبير المتضمّن الفراغات — لنستطيع استخراج مقطع نصي دقيق (بفراغاته
+    # الأصلية الصحيحة بين الكلمات) بدل إعادة أسطر كاملة قد تتجاوز حدود
+    # المقطع المطلوب فعليًا (وهو خلل كان يُسبب تكرار نفس النص الكامل لعدة
+    # فقرات متتالية تتقاسم سطرًا واحدًا في النص الصحيح).
+    spaced_full = "\n".join(line.strip() for line in truth_lines)
+    non_space_positions = [i for i, ch in enumerate(spaced_full) if not ch.isspace()]
+
+    flat = "".join(spaced_full[i] for i in non_space_positions)
     n = len(flat)
 
     def reconstruct(start, end):
-        if start >= end:
+        if start >= end or start < 0 or end > len(non_space_positions):
             return ""
-        first_line = last_line = None
-        for i in range(len(truth_lines)):
-            s, e = line_starts[i], line_starts[i + 1]
-            if e > start and s < end:
-                if first_line is None:
-                    first_line = i
-                last_line = i
-        if first_line is None:
-            return ""
-        return "\n".join(truth_lines[i].strip() for i in range(first_line, last_line + 1))
+        s = non_space_positions[start]
+        e = non_space_positions[end - 1] + 1
+        return re.sub(r"[ \t]+", " ", spaced_full[s:e]).strip()
 
     d_lens = [len(_nospace(t)) for t in paragraph_texts]
     d_counters = [Counter(_nospace(t)) for t in paragraph_texts]
