@@ -560,10 +560,26 @@ def _align_docx_to_ground_truth(paragraph_texts: list, truth_lines: list) -> dic
     return corrections
 
 
+def _all_body_paragraphs_in_order(doc) -> list:
+    """
+    يعيد كل فقرات جسم المستند (Document.paragraphs) بترتيبها الفعلي في
+    المستند، بما فيها الفقرات الواقعة داخل خلايا الجداول — وهذه لا تظهر في
+    خاصية doc.paragraphs (التي تقتصر على الفقرات المباشرة تحت الجسم فقط)، مع
+    أن pdf2docx يضع فيها فعليًا جزءًا معتبرًا من النص (لاحظنا نحو ٪10 من إجمالي
+    نص المستند داخل جداول تمثّل غالبًا الهوامش/الحواشي). المشي على شجرة XML
+    مباشرة (بدل .paragraphs/.tables المنفصلتين) يحافظ على ترتيب القراءة
+    الصحيح لكل الفقرات معًا بلا استثناء أي منها."""
+    from docx.oxml.ns import qn
+    from docx.text.paragraph import Paragraph
+
+    return [Paragraph(p, doc) for p in doc.element.body.iter(qn("w:p"))]
+
+
 def _apply_paragraph_text_rebuild(docx_path: str, corrections_by_index: dict) -> int:
     """
-    يستبدل نص كل فقرة (بفهرسها في doc.paragraphs) بالنص الصحيح المقابل من
-    corrections_by_index، بوضعه في "run" واحد فقط (أكبر run موجود أصلًا في
+    يستبدل نص كل فقرة (بفهرسها في القائمة الكاملة المرتّبة من
+    _all_body_paragraphs_in_order، شاملةً فقرات الجداول) بالنص الصحيح المقابل
+    من corrections_by_index، بوضعه في "run" واحد فقط (أكبر run موجود أصلًا في
     الفقرة من حيث طول نصه، لإبقاء التنسيق السائد لغالب نص الفقرة)، وتفريغ كل
     الـ runs الأخرى في نفس الفقرة. هذا يعني أن أي تمايز تنسيقي صغير داخل تلك
     الفقرة بعينها (كخط مختلف الحجم لجزء قصير من السطر) قد يُفقد، لكن هذا مقبول
@@ -573,7 +589,7 @@ def _apply_paragraph_text_rebuild(docx_path: str, corrections_by_index: dict) ->
     from docx import Document
 
     doc = Document(docx_path)
-    paragraphs = doc.paragraphs
+    paragraphs = _all_body_paragraphs_in_order(doc)
     applied = 0
     for idx, new_text in corrections_by_index.items():
         if idx < 0 or idx >= len(paragraphs):
@@ -597,12 +613,12 @@ def _apply_paragraph_text_rebuild(docx_path: str, corrections_by_index: dict) ->
 def _rebuild_pdf2docx_text_order(pdf_path: str, docx_path: str) -> int:
     """
     نقطة الدخول: يستخرج النص الصحيح من pdf_path عبر pdftotext، ثم يحاذيه مع
-    فقرات docx_path (ناتج pdf2docx) ويستبدل نص كل فقرة وُجد لها تطابق مضمون
-    بالنص الصحيح المقابل. يتضمن فحصًا وقائيًا أوليًا: إن اختلف إجمالي عدد
-    الأحرف (بعد حذف الفراغات) بين docx وnص PDF الصحيح بأكثر من ٪15 (مؤشر أن
-    البنية مختلفة جوهريًا، كوجود جداول/صور معقدة)، يتوقف دون أي تعديل تفاديًا
-    لاستبدال غير موثوق. يعيد عدد الفقرات التي عُدّلت فعليًا (0 يعني عدم إجراء
-    أي تغيير، وهو أمر آمن تمامًا: يبقى ناتج pdf2docx الأصلي كما هو)."""
+    كل فقرات docx_path (ناتج pdf2docx، شاملةً فقرات الجداول) ويستبدل نص كل
+    فقرة وُجد لها تطابق مضمون بالنص الصحيح المقابل. يتضمن فحصًا وقائيًا أوليًا:
+    إن اختلف إجمالي عدد الأحرف (بعد حذف الفراغات) بين docx وnص PDF الصحيح
+    بأكثر من ٪15 (مؤشر أن البنية مختلفة جوهريًا، كوجود صور معقدة)، يتوقف دون
+    أي تعديل تفاديًا لاستبدال غير موثوق. يعيد عدد الفقرات التي عُدّلت فعليًا
+    (0 يعني عدم إجراء أي تغيير، وهو أمر آمن تمامًا: يبقى ناتج pdf2docx كما هو)."""
     truth_lines = _extract_ground_truth_lines(pdf_path)
     if not truth_lines:
         return 0
@@ -610,7 +626,7 @@ def _rebuild_pdf2docx_text_order(pdf_path: str, docx_path: str) -> int:
     from docx import Document
 
     doc = Document(docx_path)
-    texts = [p.text for p in doc.paragraphs]
+    texts = [p.text for p in _all_body_paragraphs_in_order(doc)]
     nonempty_idx = [i for i, t in enumerate(texts) if t.strip()]
     nonempty_texts = [texts[i] for i in nonempty_idx]
     if not nonempty_texts:

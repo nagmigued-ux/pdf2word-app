@@ -113,6 +113,7 @@ def debug_extract():
         from converter import (
             _extract_ground_truth_lines,
             _rebuild_pdf2docx_text_order,
+            _all_body_paragraphs_in_order,
             _nospace,
         )
 
@@ -122,7 +123,7 @@ def debug_extract():
         cv.close()
 
         before_doc = Document(pdf2docx_out)
-        before_texts = [p.text for p in before_doc.paragraphs]
+        before_texts = [p.text for p in _all_body_paragraphs_in_order(before_doc)]
 
         truth_lines = _extract_ground_truth_lines(pdf_path)
         d_total = sum(len(_nospace(t)) for t in before_texts if t.strip())
@@ -131,7 +132,7 @@ def debug_extract():
         applied = _rebuild_pdf2docx_text_order(pdf_path, pdf2docx_out)
 
         after_doc = Document(pdf2docx_out)
-        after_texts = [p.text for p in after_doc.paragraphs]
+        after_texts = [p.text for p in _all_body_paragraphs_in_order(after_doc)]
 
         changed_samples = []
         for i, (b, a) in enumerate(zip(before_texts, after_texts)):
